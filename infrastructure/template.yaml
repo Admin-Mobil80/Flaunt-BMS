@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Flaunt BMS frontend — CloudFront distribution for bms.flaunt.network,
+  reading from the shared bucket owned by the Flaunt-PORTAL stack
+  (imported via Fn::ImportValue). Declares NO S3 resources — the bucket
+  and its policy belong exclusively to the Flaunt-PORTAL stack. Requires
+  Flaunt-PORTAL's stack to have been deployed at least once already
+  (its exports must exist). Must be deployed in us-east-1 (CloudFront +
+  its ACM certificate requirement).
+
+Parameters:
+  HostedZoneId:
+    Type: String
+    Description: >
+      Route 53 Hosted Zone ID for flaunt.network. Find it with:
+      aws route53 list-hosted-zones-by-name --dns-name flaunt.network
+
+  DomainName:
+    Type: String
+    Default: bms.flaunt.network
+    Description: Public domain name for the BMS frontend.
+
+Resources:
+  BmsCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  BmsOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: flaunt-bms-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  BmsDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Aliases:
+          - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref BmsCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: BmsS3Origin
+            DomainName: !ImportValue Flaunt-Portal-BucketRegionalDomainName
+            OriginPath: /BMS
+            OriginAccessControlId: !GetAtt BmsOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: BmsS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # AWS Managed-CachingOptimized
+
+  BmsRecordSetA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt BmsDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW3 # fixed CloudFront hosted zone ID
+        EvaluateTargetHealth: false
+
+  BmsRecordSetAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt BmsDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW3
+        EvaluateTargetHealth: false
+
+Outputs:
+  DistributionId:
+    Value: !Ref BmsDistribution
+  DistributionDomainName:
+    Value: !GetAtt BmsDistribution.DomainName
