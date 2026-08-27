@@ -1,22 +1,50 @@
 # Flaunt BMS
 
-Internal admin/business-management static frontend for Flaunt. Plain HTML/CSS/JS in [`public/`](public/), no build step. Deploys to the shared S3 bucket `webapps.flaunt.network` (under the `/BMS` prefix) behind its own CloudFront distribution at `bms.flaunt.network`.
+Static frontend for **https://bms.flaunt.network**. One self-contained `public/index.html` — a
+hash-routed single page, no build step, no dependencies.
 
-**This stack does not own the shared S3 bucket** — it imports the bucket's regional domain name from [Flaunt-PORTAL](https://github.com/Admin-Mobil80/Flaunt-PORTAL)'s CloudFormation exports via `Fn::ImportValue`. **Flaunt-PORTAL's stack must be deployed at least once before this stack's first deploy**, or the deploy will fail with a missing-export error.
+## How this deploys
 
-## One-time account setup (do this before the first push to `main`)
+**Push to `main`.** [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) assumes
+`flaunt-github-deploy-prod` through GitHub OIDC (no stored AWS keys), syncs `public/` to S3,
+invalidates CloudFront, waits for the invalidation, then checks the site returns 200.
 
-1. Confirm [Flaunt-PORTAL](https://github.com/Admin-Mobil80/Flaunt-PORTAL) has already been deployed at least once (its exports must exist).
-2. Confirm the GitHub OIDC bootstrap stack has been deployed (see [Flaunt-BACKEND/bootstrap/github-oidc.yaml](https://github.com/Admin-Mobil80/Flaunt-BACKEND/blob/main/bootstrap/github-oidc.yaml)) — this creates the `flaunt-bms-deploy-role` this workflow assumes.
-3. Look up your Route 53 hosted zone ID for `flaunt.network`:
-   ```bash
-   aws route53 list-hosted-zones-by-name --dns-name flaunt.network
-   ```
-4. In [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), replace the two placeholders:
-   - `DEPLOY_ROLE_ARN` — the `flaunt-bms-deploy-role` ARN from the bootstrap stack's output
-   - `HOSTED_ZONE_ID` — the value from step 3
-5. Push to `main`. CI will create the cert, distribution, and DNS record (no bucket — that already exists from Portal's stack).
+The division of labour is fixed:
 
-## Local development
+| Owns | What |
+|---|---|
+| **This repo, via GitHub Actions** | the site's content |
+| **[Flaunt-BACKEND](../Flaunt-BACKEND), via CDK** | the bucket, distribution, certificate, DNS, and the IAM role this workflow assumes |
 
-Just open `public/index.html` in a browser, or serve the folder with any static file server.
+CDK never uploads content, and this workflow never creates infrastructure. A copy change
+ships by pushing here; it needs no CloudFormation deploy and no AWS credentials on your machine.
+
+## Editing the page
+
+`public/index.html` is **generated** — do not hand-edit it. Both frontends are built from one
+source so they cannot drift apart:
+
+```bash
+cd ../design && AWS_PROFILE=cloudmeter node build-site.mjs
+```
+
+That writes this repo's `public/index.html` and Flaunt-PORTAL's. Commit the result and push.
+
+## Current state
+
+This is a **preview build of a design prototype**. The page carries a banner saying so and is
+served with `X-Robots-Tag: noindex`, because there is no backend behind it yet — no accounts,
+no payments, nothing persisted. It exists so the product can be reviewed and clicked through
+while the real services are built.
+
+## Sign-in
+
+The console is gated by passwordless email OTP against a dedicated Cognito user pool
+(`FlauntBmsAuthStackProd`). One account exists — `riyad@mobil80.com` — self sign-up is off, and
+the app client enables only the custom auth flow, so there is no password to phish and no
+second way in.
+
+**This is real authentication, but not yet real data protection.** The page is a static file
+with sample data inside its JavaScript: the login blocks the rendered console, but view-source
+still shows the sample rows. That closes when BMS reads from the authenticated API instead of
+from constants in the page.
